@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../data/services/location_service.dart';
+import '../../../data/services/ride_booking_service.dart';
 import 'models/ride_models.dart';
 import 'services/route_service.dart';
 
@@ -29,8 +30,8 @@ class _RideHomeScreenState extends ConsumerState<RideHomeScreen> {
   LatLng? _currentLocation;
   LatLng? _pickupLocation;
   LatLng? _dropLocation;
-  String _pickupAddress = 'Current Location';
   String _dropAddress = '';
+  bool _isLoadingRoute = false;
 
   RideType? _selectedRideType;
   String _paymentMethod = 'Cash';
@@ -40,7 +41,6 @@ class _RideHomeScreenState extends ConsumerState<RideHomeScreen> {
   double _distanceKm = 0;
   double _durationMin = 0;
   double _fare = 0;
-  bool _isLoadingRoute = false;
 
   // Driver
   DriverInfo? _assignedDriver;
@@ -88,10 +88,18 @@ class _RideHomeScreenState extends ConsumerState<RideHomeScreen> {
     }
   }
 
-  void _loadNearbyDrivers() {
-    setState(() {
-      _nearbyDrivers = DriverInfo.mockDrivers;
-    });
+  Future<void> _loadNearbyDrivers() async {
+    // Load real online drivers from database
+    try {
+      final rideService = ref.read(rideBookingServiceProvider);
+      // Query online drivers near current location
+      // For now, clear mock data - real drivers shown via Realtime
+      setState(() {
+        _nearbyDrivers = [];
+      });
+    } catch (e) {
+      // Silently fail - nearby drivers are supplementary
+    }
   }
 
   @override
@@ -146,7 +154,8 @@ class _RideHomeScreenState extends ConsumerState<RideHomeScreen> {
                 points: _driverRoutePoints,
                 color: Colors.blue,
                 strokeWidth: 3,
-                isDotted: true,
+                borderColor: Colors.white,
+                borderStrokeWidth: 1,
               ),
             ],
           ),
@@ -846,20 +855,78 @@ class _RideHomeScreenState extends ConsumerState<RideHomeScreen> {
       padding: const EdgeInsets.all(24),
       child: Column(
         children: [
-          SizedBox(
-              width: 60,
-              height: 60,
-              child: CircularProgressIndicator(
-                  strokeWidth: 3, color: AppColors.primary)),
-          const SizedBox(height: 20),
-          const Text('Finding your driver...',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          Text('Looking nearby', style: TextStyle(color: Colors.grey.shade600)),
+          // Animated pulsing search indicator
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.8, end: 1.2),
+            duration: const Duration(milliseconds: 800),
+            curve: Curves.easeInOut,
+            builder: (context, scale, child) {
+              return Transform.scale(
+                scale: scale,
+                child: Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.primary.withOpacity(0.2),
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 60,
+                      height: 60,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.primary.withOpacity(0.4),
+                      ),
+                      child: const Center(
+                        child:
+                            Icon(Icons.search, size: 32, color: Colors.black87),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+            onEnd: () {
+              // Restart animation
+              if (mounted && _state == RideState.searching) {
+                setState(() {});
+              }
+            },
+          ),
           const SizedBox(height: 24),
-          TextButton(
-            onPressed: () => setState(() => _state = RideState.idle),
-            child: const Text('Cancel', style: TextStyle(color: Colors.red)),
+          const Text('Finding your driver...',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text('Searching for drivers nearby',
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
+          const SizedBox(height: 16),
+          // Progress dots animation
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(3, (i) {
+              return AnimatedContainer(
+                duration: Duration(milliseconds: 300 + (i * 100)),
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.primary.withOpacity(0.3 + (i * 0.2)),
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 32),
+          OutlinedButton.icon(
+            onPressed: _cancelRide,
+            icon: const Icon(Icons.close, size: 18),
+            label: const Text('Cancel Search'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.red,
+              side: const BorderSide(color: Colors.red),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
           ),
         ],
       ),
@@ -1284,36 +1351,132 @@ class _RideHomeScreenState extends ConsumerState<RideHomeScreen> {
     );
   }
 
+  // Current booking ID for cancellation
+  String? _currentBookingId;
+
   Future<void> _confirmRide() async {
+    if (_pickupLocation == null ||
+        _dropLocation == null ||
+        _selectedRideType == null) {
+      return;
+    }
+
     setState(() => _state = RideState.searching);
 
-    // Simulate matching
-    await Future.delayed(const Duration(seconds: 3));
+    try {
+      final rideService = ref.read(rideBookingServiceProvider);
 
-    if (mounted) {
-      final driver = DriverInfo.mockDrivers[0];
-      setState(() {
-        _assignedDriver = driver;
-        _driverLocation = driver.currentLocation;
-        _otp = '${1000 + DateTime.now().millisecond % 9000}';
-        _state = RideState.driverEnRoute;
-      });
+      // Create booking via Edge Function
+      final booking = await rideService.createBooking(
+        pickupAddress: 'Pickup Location',
+        pickupLat: _pickupLocation!.latitude,
+        pickupLng: _pickupLocation!.longitude,
+        dropAddress: _dropAddress.isNotEmpty ? _dropAddress : 'Destination',
+        dropLat: _dropLocation!.latitude,
+        dropLng: _dropLocation!.longitude,
+        rideTypeId: _selectedRideType!.id,
+        timingMode: _timingMode == RideTimingMode.now
+            ? 'now'
+            : _timingMode == RideTimingMode.tomorrow
+                ? 'tomorrow'
+                : 'scheduled',
+        scheduledTime: _scheduledTime,
+        distanceKm: _distanceKm,
+        durationMinutes: _durationMin.toInt(),
+        estimatedFare: _fare,
+        paymentMethod: _paymentMethod.toLowerCase(),
+      );
 
-      // Calculate driver route to pickup
-      if (_driverLocation != null && _pickupLocation != null) {
-        final driverRoute = await _routeService.getWalkingRoute(
-            _driverLocation!, _pickupLocation!);
-        if (driverRoute != null && mounted) {
-          setState(() {
-            _driverRoutePoints = driverRoute.points;
-            _driverDistanceMeters = driverRoute.distanceMeters;
-            _driverEtaMinutes = (driverRoute.durationSeconds / 60).ceil();
-          });
+      _currentBookingId = booking.bookingId;
+      _otp = booking.otp;
+
+      // Trigger driver matching
+      final matchResult = await rideService.matchDriver(
+        bookingId: booking.bookingId,
+        searchRadiusKm: 5.0,
+        maxAttempts: 10,
+      );
+
+      if (!mounted) return;
+
+      if (matchResult.matched && matchResult.driverId != null) {
+        // Fetch full driver profile from database
+        final driverProfile =
+            await rideService.getDriverProfile(matchResult.driverId!);
+
+        setState(() {
+          _assignedDriver = DriverInfo(
+            id: matchResult.driverId!,
+            name: driverProfile?['name'] ?? matchResult.driverName ?? 'Driver',
+            photoUrl: driverProfile?['photo_url'] ?? '',
+            rating:
+                (driverProfile?['rating'] ?? matchResult.driverRating ?? 4.5)
+                    .toDouble(),
+            trips: driverProfile?['total_trips'] ?? 0,
+            phone: driverProfile?['phone'] ?? '',
+          );
+          _driverEtaMinutes = matchResult.etaMinutes ?? 5;
+          _state = RideState.driverEnRoute;
+        });
+
+        // Start listening to booking updates via Realtime
+        _watchBookingUpdates(booking.bookingId);
+      } else {
+        // No driver found
+        setState(() => _state = RideState.idle);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content:
+                    Text('No drivers available nearby. Please try again.')),
+          );
         }
       }
-
-      _startDriverTracking();
+    } catch (e) {
+      setState(() => _state = RideState.idle);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Booking failed: ${e.toString()}')),
+        );
+      }
     }
+  }
+
+  StreamSubscription? _bookingSubscription;
+
+  void _watchBookingUpdates(String bookingId) {
+    final rideService = ref.read(rideBookingServiceProvider);
+    _bookingSubscription?.cancel();
+    _bookingSubscription =
+        rideService.watchBooking(bookingId).listen((booking) {
+      if (!mounted) return;
+
+      final status = booking['status'] as String?;
+      if (status == null) return;
+
+      setState(() {
+        switch (status) {
+          case 'driver_en_route':
+            _state = RideState.driverEnRoute;
+            break;
+          case 'driver_arrived':
+            _state = RideState.driverArrived;
+            break;
+          case 'trip_started':
+          case 'trip_in_progress':
+            _state = RideState.tripInProgress;
+            break;
+          case 'trip_completed':
+            _state = RideState.tripCompleted;
+            break;
+          case 'cancelled_by_user':
+          case 'cancelled_by_driver':
+          case 'auto_cancelled':
+            _state = RideState.cancelled;
+            break;
+        }
+      });
+    });
   }
 
   void _startDriverTracking() {
@@ -1347,16 +1510,45 @@ class _RideHomeScreenState extends ConsumerState<RideHomeScreen> {
     });
   }
 
-  void _cancelRide() {
+  Future<void> _cancelRide() async {
     _driverUpdateTimer?.cancel();
+    _bookingSubscription?.cancel();
+
+    if (_currentBookingId != null) {
+      try {
+        final rideService = ref.read(rideBookingServiceProvider);
+        final result = await rideService.cancelRide(
+          bookingId: _currentBookingId!,
+          reason: 'Cancelled by user',
+          lat: _pickupLocation?.latitude,
+          lng: _pickupLocation?.longitude,
+        );
+
+        if (mounted) {
+          final fee = result.cancellationFee;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(fee > 0
+                    ? 'Ride cancelled. Cancellation fee: ₹${fee.toInt()}'
+                    : 'Ride cancelled')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error cancelling: ${e.toString()}')),
+          );
+        }
+      }
+    }
+
     setState(() {
       _state = RideState.idle;
       _assignedDriver = null;
       _driverLocation = null;
       _driverRoutePoints = [];
+      _currentBookingId = null;
     });
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Ride cancelled')));
   }
 
   void _resetState() {

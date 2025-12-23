@@ -10,23 +10,33 @@ class User {
   User({required this.id, required this.phoneNumber, required this.name});
 }
 
-// Service
+// Service - Works with Supabase test phone credentials
 class MockAuthService {
-  Future<void> requestOtp(String phoneNumber) async {
+  // Test credentials configured in Supabase
+  static const _testPhone = '9176101672';
+  static const _testOtp = '123456';
+
+  Future<void> sendOtp(String phoneNumber) async {
     // Simulate API call
-    await Future.delayed(const Duration(seconds: 1));
-    // In a real app, this would trigger SMS.
-    // Here we just accept any number.
+    await Future.delayed(const Duration(milliseconds: 500));
+    // In production, this would trigger actual SMS via Supabase
   }
 
   Future<User> verifyOtp(String phoneNumber, String otp) async {
-    await Future.delayed(const Duration(seconds: 1));
-    if (otp == '1234') {
-      // Mock OTP
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // Clean phone number for comparison
+    final cleanPhone = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    final lastTenDigits = cleanPhone.length >= 10
+        ? cleanPhone.substring(cleanPhone.length - 10)
+        : cleanPhone;
+
+    // Accept test credentials OR hardcoded test OTP
+    if ((lastTenDigits == _testPhone && otp == _testOtp) || otp == '123456') {
       return User(
         id: const Uuid().v4(),
         phoneNumber: phoneNumber,
-        name: 'Demo User',
+        name: 'Test User',
       );
     } else {
       throw Exception('Invalid OTP');

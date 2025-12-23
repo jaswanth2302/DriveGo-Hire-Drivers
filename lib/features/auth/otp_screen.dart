@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_strings.dart';
-import '../../data/services/mock_auth_service.dart';
+import '../../data/services/auth_service.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
   final String phoneNumber;
@@ -25,6 +25,17 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
   }
 
   Future<void> _handleVerify() async {
+    final otp = _otpController.text.trim();
+    if (otp.isEmpty) {
+      setState(() => _error = 'Please enter OTP');
+      return;
+    }
+
+    if (otp.length < 6) {
+      setState(() => _error = 'Please enter complete OTP');
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = null;
@@ -32,18 +43,15 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
 
     try {
       final authService = ref.read(authServiceProvider);
-      final user =
-          await authService.verifyOtp(widget.phoneNumber, _otpController.text);
-
-      // Update global user state
-      ref.read(userProvider.notifier).state = user;
+      await authService.verifyOtp(widget.phoneNumber, otp);
 
       if (mounted) {
+        // Navigate to home on successful verification
         context.go('/home');
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _error = e.toString());
+        setState(() => _error = 'Invalid OTP. Please try again.');
       }
     } finally {
       if (mounted) {
@@ -65,27 +73,27 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                '${AppStrings.otpSubtitle} ${widget.phoneNumber}',
+                '${AppStrings.otpSubtitle} +91${widget.phoneNumber}',
                 style: Theme.of(context).textTheme.bodyLarge,
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
               const Text(
-                'Use code 1234',
+                'Enter the 6-digit code sent to your phone',
                 style: TextStyle(color: Colors.grey),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
 
-              // Simple OTP Input (One text field for MVP)
+              // OTP Input
               TextField(
                 controller: _otpController,
                 keyboardType: TextInputType.number,
-                maxLength: 4,
+                maxLength: 6,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.displaySmall,
                 decoration: InputDecoration(
-                  hintText: '0000',
+                  hintText: '000000',
                   counterText: '',
                   errorText: _error,
                 ),
@@ -101,6 +109,34 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white))
                     : const Text(AppStrings.verify),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Resend OTP button
+              TextButton(
+                onPressed: _isLoading
+                    ? null
+                    : () async {
+                        try {
+                          final authService = ref.read(authServiceProvider);
+                          await authService.sendOtp(widget.phoneNumber);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text('OTP sent successfully!')),
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text('Failed to resend OTP')),
+                            );
+                          }
+                        }
+                      },
+                child: const Text('Resend OTP'),
               ),
             ],
           ),

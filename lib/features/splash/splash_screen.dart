@@ -20,8 +20,7 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _checkAuth() async {
     await Future.delayed(const Duration(seconds: 2)); // Simulate loading
     if (mounted) {
-      // For MVP, always go to Login or check local storage
-      // To demo both apps easily, we go to Login which links to both.
+      // Go to video login for premium experience
       context.go('/video-login');
     }
   }

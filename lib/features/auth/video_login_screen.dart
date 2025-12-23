@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/video_background.dart';
+import '../../../data/services/auth_service.dart';
 
 /// Login screen with smooth background video.
 ///
@@ -10,15 +12,61 @@ import '../../../core/widgets/video_background.dart';
 /// - Seamless looping
 /// - Lifecycle-aware playback
 /// - Dark overlay for text readability
-class VideoLoginScreen extends StatelessWidget {
+class VideoLoginScreen extends ConsumerStatefulWidget {
   const VideoLoginScreen({super.key});
+
+  @override
+  ConsumerState<VideoLoginScreen> createState() => _VideoLoginScreenState();
+}
+
+class _VideoLoginScreenState extends ConsumerState<VideoLoginScreen> {
+  final _phoneController = TextEditingController();
+  bool _isLoading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleLogin() async {
+    final phone = _phoneController.text.trim();
+    if (phone.isEmpty || phone.length < 10) {
+      if (mounted) {
+        setState(() => _error = 'Please enter a valid mobile number');
+      }
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final authService = ref.read(authServiceProvider);
+      await authService.sendOtp(phone);
+      if (mounted) {
+        context.push('/otp', extra: phone);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString().replaceAll('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: VideoBackground(
         assetPath: 'assets/IMG_2816.mp4',
-        overlayOpacity: 0.3, // 30% dark overlay for readability
+        overlayOpacity: 0.4,
         overlayColor: Colors.black,
         child: SafeArea(
           child: Column(
@@ -109,8 +157,19 @@ class VideoLoginScreen extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Error Message
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: Colors.red, fontSize: 13),
+              ),
+            ),
+
           // Phone input
           TextField(
+            controller: _phoneController,
             keyboardType: TextInputType.phone,
             decoration: InputDecoration(
               hintText: 'Enter mobile number',
@@ -130,7 +189,7 @@ class VideoLoginScreen extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () => context.go('/home'),
+              onPressed: _isLoading ? null : _handleLogin,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.black,
@@ -139,12 +198,37 @@ class VideoLoginScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text(
-                'Continue',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+              child: _isLoading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.black))
+                  : const Text(
+                      'Continue',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Email Login Option
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => context.push('/auth/email'),
+              icon: const Icon(Icons.email_outlined),
+              label: const Text('Continue with Email'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                side: BorderSide(color: Colors.grey.shade300),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
+                foregroundColor: Colors.black87,
               ),
             ),
           ),

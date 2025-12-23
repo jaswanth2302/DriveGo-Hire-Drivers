@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:drivo/features/auth/login_screen.dart';
 import 'package:drivo/features/auth/otp_screen.dart';
+import 'package:drivo/features/auth/email_login_screen.dart';
 import 'package:drivo/features/main_shell.dart';
 import 'package:drivo/features/customer/booking/booking_screen.dart';
 import 'package:drivo/features/customer/booking/long_trip_screen.dart';
@@ -33,6 +34,10 @@ class AppRouter {
       GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/auth/email',
+        builder: (context, state) => const EmailLoginScreen(),
       ),
       GoRoute(
         path: '/video-login',

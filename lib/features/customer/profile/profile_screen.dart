@@ -1,17 +1,23 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../core/widgets/animated_widgets.dart';
+import '../../../data/services/auth_service.dart';
 
-class ProfileScreen extends StatefulWidget {
+class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  ConsumerState<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
-  // Mock KYC status
+class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  // Real user data
+  Map<String, dynamic>? _userProfile;
+  bool _isLoading = false;
+
+  // Mock KYC status (keep until backend ready)
   String _kycStatus = 'verified'; // pending, in_review, verified, rejected
 
   // Mock listed cars
@@ -35,40 +41,84 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'amount': 850,
       'status': 'completed',
     },
-    {
-      'type': 'ride',
-      'from': 'HSR Layout',
-      'to': 'Koramangala',
-      'date': 'Dec 20',
-      'amount': 120,
-      'status': 'completed',
-    },
-    {
-      'type': 'rental',
-      'car': 'Honda City',
-      'days': 2,
-      'date': 'Dec 18',
-      'amount': 3600,
-      'status': 'completed',
-    },
-    {
-      'type': 'driver',
-      'from': 'MG Road',
-      'to': 'Electronic City',
-      'date': 'Dec 15',
-      'amount': 620,
-      'status': 'completed',
-    },
+    // ... kept mock history for now
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    print('DEBUG: Starting loadProfile');
+    final authService = ref.read(authServiceProvider);
+
+    // 1. Instant Fallback to Auth Metadata
+    if (authService.currentUser != null) {
+      final user = authService.currentUser!;
+      setState(() {
+        // Initialize with Auth Data first
+        _userProfile = {
+          'name': user.userMetadata?['name'] ?? 'User',
+          'phone': user.phone ?? '',
+          'email': user.email ?? '',
+          'id': user.id,
+        };
+      });
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      print('DEBUG: Fetching DB profile');
+      // Force timeout after 10 seconds
+      final profile = await authService.getUserProfile().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          print('DEBUG: Timeout fetching profile');
+          return null;
+        },
+      );
+
+      print('DEBUG: Fetched profile: $profile');
+
+      if (mounted) {
+        setState(() {
+          if (profile != null) {
+            _userProfile = profile;
+            if (profile['kyc_status'] != null) {
+              _kycStatus = profile['kyc_status'].toString();
+            }
+          }
+        });
+      }
+    } catch (e) {
+      print('DEBUG: Error loading profile: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final name = _userProfile?['name'] as String? ?? 'User';
+    final phone = _userProfile?['phone'] as String? ?? 'No Phone';
+    final email = _userProfile?['email'] as String? ?? '';
+    final photoUrl = _userProfile?['photo_url'] as String?;
+
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       body: SafeArea(
         child: SingleChildScrollView(
           child: Column(
             children: [
+              if (_isLoading)
+                const LinearProgressIndicator(
+                    backgroundColor: Colors.white, color: AppColors.primary),
+
               // Header with profile info
               Container(
                 padding: const EdgeInsets.all(20),
@@ -80,30 +130,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         CircleAvatar(
                           radius: 32,
                           backgroundColor: AppColors.primary,
-                          child: const Icon(Icons.person,
-                              size: 36, color: Colors.black),
+                          backgroundImage:
+                              photoUrl != null ? NetworkImage(photoUrl) : null,
+                          child: photoUrl == null
+                              ? const Icon(Icons.person,
+                                  size: 36, color: Colors.black)
+                              : null,
                         ),
                         const SizedBox(width: 16),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'John Doe',
-                                style: TextStyle(
+                              Text(
+                                name,
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 18,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
                               const SizedBox(height: 2),
-                              Text(
-                                '+91 98765 43210',
-                                style: TextStyle(
-                                  color: Colors.grey.shade400,
-                                  fontSize: 13,
+                              if (phone.isNotEmpty)
+                                Text(
+                                  phone,
+                                  style: TextStyle(
+                                    color: Colors.grey.shade400,
+                                    fontSize: 13,
+                                  ),
                                 ),
-                              ),
+                              if (email.isNotEmpty)
+                                Text(
+                                  email,
+                                  style: TextStyle(
+                                    color: Colors.grey.shade400,
+                                    fontSize: 13,
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -209,7 +272,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton(
-                        onPressed: () => context.go('/login'),
+                        onPressed: () async {
+                          try {
+                            // Show loading indicator on button? Or just await
+                            await ref.read(authServiceProvider).signOut();
+                          } catch (e) {
+                            print('Logout error: $e');
+                          } finally {
+                            if (context.mounted) {
+                              context.go('/login');
+                            }
+                          }
+                        },
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.red,
                           side: const BorderSide(color: Colors.red),
@@ -598,6 +672,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showEditProfile() {
+    final name = _userProfile?['name'] as String? ?? '';
+    final email = _userProfile?['email'] as String? ?? '';
+    final nameController = TextEditingController(text: name);
+    final emailController = TextEditingController(text: email);
+    bool isSaving = false;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -605,70 +685,115 @@ class _ProfileScreenState extends State<ProfileScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-          left: 20,
-          right: 20,
-          top: 20,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Edit Profile',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              decoration: InputDecoration(
-                labelText: 'Name',
-                hintText: 'John Doe',
-                filled: true,
-                fillColor: Colors.grey.shade100,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 20,
+            right: 20,
+            top: 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Edit Profile',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              decoration: InputDecoration(
-                labelText: 'Email',
-                hintText: 'john@example.com',
-                filled: true,
-                fillColor: Colors.grey.shade100,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Profile updated!')),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
+              const SizedBox(height: 20),
+              TextField(
+                controller: nameController,
+                decoration: InputDecoration(
+                  labelText: 'Name',
+                  filled: true,
+                  fillColor: Colors.grey.shade100,
+                  border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
                   ),
                 ),
-                child: const Text('Save'),
               ),
-            ),
-            const SizedBox(height: 30),
-          ],
+              const SizedBox(height: 16),
+              TextField(
+                controller: emailController,
+                decoration: InputDecoration(
+                  labelText: 'Email',
+                  helperText: 'Changing email will require verification',
+                  filled: true,
+                  fillColor: Colors.grey.shade100,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final newName = nameController.text.trim();
+                          final newEmail = emailController.text.trim();
+
+                          if (newName.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text('Name cannot be empty')),
+                            );
+                            return;
+                          }
+
+                          setSheetState(() => isSaving = true);
+
+                          try {
+                            await ref
+                                .read(authServiceProvider)
+                                .updateUserProfile(
+                                  name: newName,
+                                  email: newEmail,
+                                );
+
+                            if (mounted) {
+                              Navigator.pop(context); // Close sheet
+                              _loadProfile(); // Refresh UI
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content:
+                                        Text('Profile updated successfully')),
+                              );
+                            }
+                          } catch (e) {
+                            setSheetState(() => isSaving = false);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Error: $e')),
+                              );
+                            }
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: isSaving
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Save Changes'),
+                ),
+              ),
+              const SizedBox(height: 30),
+            ],
+          ),
         ),
       ),
     );

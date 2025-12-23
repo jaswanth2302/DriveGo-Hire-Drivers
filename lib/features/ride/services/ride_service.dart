@@ -50,7 +50,7 @@ class RideService {
   }
 
   /// Request a ride (mock)
-  Future<DriverInfo?> requestRide(RideRequest request) async {
+  Future<DriverInfo?> requestRide(RideBooking request) async {
     // Simulate matching delay (2-5 seconds)
     await Future.delayed(Duration(seconds: 2 + _random.nextInt(3)));
 
